@@ -180,6 +180,17 @@ def cond_box(rsi: float, rsi_ma: float):
 # ──────────────────────────────────────────────
 # DATA FETCHERS  (cached to avoid re-fetching)
 # ──────────────────────────────────────────────
+def flatten_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    yfinance sometimes returns multi-level column headers like ("Close", "RELIANCE.NS").
+    This flattens them to single-level ("Close") so the rest of the code works normally.
+    Root cause: newer yfinance versions always return MultiIndex when group_by is default.
+    """
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = df.columns.get_level_values(0)
+    return df
+
+
 @st.cache_data(ttl=60)   # refresh every 60 s
 def fetch_intraday(symbol: str, interval: str) -> dict:
     """Download intraday data, compute RSI + MA, return signal dict."""
@@ -193,6 +204,8 @@ def fetch_intraday(symbol: str, interval: str) -> dict:
     if df.empty:
         raise ValueError(f"No data for {symbol} @ {interval}")
 
+    df = flatten_columns(df)                          # ← fix multi-level columns
+
     close          = df["Close"].squeeze()
     df["RSI"]      = calculate_rsi(close, 14)
     df["RSI_MA20"] = df["RSI"].rolling(20).mean()
@@ -203,7 +216,7 @@ def fetch_intraday(symbol: str, interval: str) -> dict:
     rsi_ma   = safe_float(latest["RSI_MA20"])
 
     if rsi is None or rsi_ma is None:
-        return {"rsi": None, "rsi_ma20": None, "call": False, "put": False}
+        return {"rsi": None, "rsi_ma20": None, "call": False, "put": False, "delta": 0}
 
     return {
         "rsi":      round(rsi, 2),
@@ -226,6 +239,8 @@ def fetch_daily(symbol: str) -> dict:
     )
     if df.empty:
         return {"rsi": None, "rsi_ma20": None, "call": False, "put": False, "df": None}
+
+    df = flatten_columns(df)                          # ← fix multi-level columns
 
     # Fix duplicate timestamps (common NSE bug)
     df = df[~df.index.duplicated(keep="last")]
